@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Acompanhar chamado – WS</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500&display=swap');
+  :root {
+    --nu:#8711C1; --bg:#0d0d0d; --surface:#1a1a1a; --surface2:#242424;
+    --text:#f0f0f0; --muted:#888; --border:#333;
+    --success:#00c47d; --radius:14px;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; font-size:15px; height:100dvh; display:flex; flex-direction:column; }
+
+  .header { background:var(--nu); padding:16px 20px; display:flex; align-items:center; gap:12px; flex-shrink:0; }
+  .header-back { color:#fff; font-size:22px; cursor:pointer; line-height:1; }
+  .header-info { flex:1; }
+  .header-titulo { font-family:'Syne',sans-serif; font-weight:700; font-size:15px; color:#fff; }
+  .header-id     { font-size:11px; color:rgba(255,255,255,0.65); margin-top:1px; }
+
+  .status-bar { padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--success); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .status-txt { font-size:12px; color:var(--muted); }
+  .status-val { font-size:12px; font-weight:500; }
+
+  .msgs { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+
+  .msg-row { display:flex; align-items:flex-end; gap:8px; }
+  .msg-row.minha { flex-direction:row-reverse; }
+  .avatar { width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; }
+  .avatar.sol { background:rgba(135,17,193,0.2); }
+  .avatar.tec { background:rgba(0,196,125,0.2); }
+  .bubble { max-width:75%; padding:10px 14px; border-radius:16px; font-size:14px; line-height:1.5; }
+  .bubble.solicitante { background:var(--nu); color:#fff; border-bottom-right-radius:4px; }
+  .bubble.tecnico     { background:var(--surface2); color:var(--text); border-bottom-left-radius:4px; }
+  .bubble.sistema     { background:transparent; border:1px dashed var(--border); color:var(--muted); font-size:12px; text-align:center; border-radius:8px; padding:6px 12px; align-self:center; max-width:90%; }
+  .msg-time { font-size:10px; color:var(--muted); margin-top:3px; }
+
+  .input-area { padding:12px 16px; background:var(--surface); border-top:1px solid var(--border); display:flex; gap:8px; align-items:flex-end; flex-shrink:0; }
+  .msg-input {
+    flex:1; background:var(--surface2); border:1.5px solid var(--border);
+    border-radius:20px; color:var(--text); font-family:'DM Sans',sans-serif;
+    font-size:14px; padding:10px 16px; outline:none; resize:none;
+    max-height:100px; transition:border-color 0.2s;
+  }
+  .msg-input:focus { border-color:var(--nu); }
+  .btn-send {
+    width:42px; height:42px; border-radius:50%; background:var(--nu);
+    border:none; color:#fff; font-size:18px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0; transition:transform 0.15s;
+  }
+  .btn-send:active { transform:scale(0.92); }
+  .spinner { width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 0.7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .empty-state { text-align:center; color:var(--muted); padding:40px 20px; font-size:13px; line-height:1.6; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-back" onclick="history.back()">←</div>
+  <div class="header-info">
+    <div class="header-titulo">Acompanhar chamado</div>
+    <div class="header-id" id="header-id">carregando...</div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <div class="status-dot"></div>
+  <span class="status-txt">Status:</span>
+  <span class="status-val" id="status-val">—</span>
+</div>
+
+<div class="msgs" id="msgs-area">
+  <div class="empty-state">Carregando conversa...</div>
+</div>
+
+<div class="input-area">
+  <textarea class="msg-input" id="msg-input" placeholder="Responda ao técnico..." rows="1"
+    oninput="autoResize(this)"
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMsg();}"></textarea>
+  <button class="btn-send" id="btn-send" onclick="enviarMsg()">➤</button>
+</div>
+
+<script>
+  // ─────────────────────────────────────────────────────────────
+  // ⚙️  CONFIGURAÇÃO — mesma URL do Apps Script do index.html
+  // ─────────────────────────────────────────────────────────────
+  const BACKEND_URL = "COLE_AQUI_A_URL_DO_SEU_APPS_SCRIPT";
+  // ─────────────────────────────────────────────────────────────
+
+  const params     = new URLSearchParams(window.location.search);
+  const idChamado  = params.get('id')    || '';
+  const nomeUser   = params.get('nome')  || 'Você';
+  const emailUser  = params.get('email') || '';
+
+  document.getElementById('header-id').textContent = '#' + idChamado;
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+  }
+
+  async function fetchDados() {
+    try {
+      const r    = await fetch(BACKEND_URL + '?pagina=chatdata&id=' + encodeURIComponent(idChamado));
+      const data = await r.json();
+      if (data.msgs)   renderMensagens(data.msgs);
+      if (data.status) document.getElementById('status-val').textContent = data.status;
+    } catch(e) { console.error(e); }
+  }
+
+  function renderMensagens(msgs) {
+    const area = document.getElementById('msgs-area');
+    if (!msgs.length) {
+      area.innerHTML = '<div class="empty-state">Nenhuma mensagem ainda.<br>O técnico responderá em breve. 👋</div>';
+      return;
+    }
+    area.innerHTML = '';
+    msgs.forEach(m => {
+      const isMin = m.tipo === 'solicitante';
+      const isSis = m.tipo === 'sistema';
+      const row   = document.createElement('div');
+      if (isSis) {
+        row.className = 'msg-row';
+        row.innerHTML = `<div class="bubble sistema">${m.mensagem}</div>`;
+      } else {
+        row.className = 'msg-row' + (isMin ? ' minha' : '');
+        row.innerHTML = `
+          <div class="avatar ${isMin ? 'sol' : 'tec'}">${isMin ? '👤' : '🔧'}</div>
+          <div>
+            <div class="bubble ${m.tipo}">${m.mensagem}</div>
+            <div class="msg-time">${m.dataHora}</div>
+          </div>`;
+      }
+      area.appendChild(row);
+    });
+    area.scrollTop = area.scrollHeight;
+  }
+
+  async function enviarMsg() {
+    const input = document.getElementById('msg-input');
+    const txt   = input.value.trim();
+    if (!txt) return;
+
+    const btn = document.getElementById('btn-send');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner"></div>';
+    input.value = '';
+    input.style.height = 'auto';
+
+    try {
+      await fetch(BACKEND_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          acao:             'enviarMensagem',
+          idChamado,
+          mensagem:         txt,
+          autor:            nomeUser,
+          tipo:             'solicitante',
+          emailSolicitante: emailUser
+        })
+      });
+      await fetchDados();
+    } catch(e) {
+      alert('Erro ao enviar mensagem. Tente novamente.');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '➤';
+  }
+
+  // Polling a cada 10s
+  fetchDados();
+  setInterval(fetchDados, 10000);
+</script>
+</body>
+</html>
